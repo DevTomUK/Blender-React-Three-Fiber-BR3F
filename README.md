@@ -12,8 +12,9 @@ dependencies.
 Working end to end. One click exports the scene to a `.glb` **and** generates
 a matching React Three Fiber component (`.jsx` or `.tsx`) — node keys match
 what three.js `GLTFLoader` produces at runtime, quaternions are converted to
-Euler angles, and TSX output includes a typed `GLTFResult`. Per-mesh shadow
-controls and a code preview come next.
+Euler angles, and TSX output includes a typed `GLTFResult`. The panel lists
+every mesh with per-mesh **include / castShadow / receiveShadow** toggles. A
+code preview comes next.
 
 ## Install
 
@@ -31,7 +32,9 @@ Works in Blender 3.6+.
    **Component Folder** at `src/components/` (leave the component folder
    empty to write both files side by side).
 4. Pick **JSX** or **TSX**.
-5. Click **Export GLB + Component** to write `<name>.glb` and the matching
+5. In the **Meshes** list, tick which meshes to include and toggle their
+   `castShadow` / `receiveShadow` props individually.
+6. Click **Export GLB + Component** to write `<name>.glb` and the matching
    `<Name>.jsx` / `.tsx`.
 
 Then use it like any other component:

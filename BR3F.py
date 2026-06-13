@@ -53,6 +53,26 @@ class R3FSettings(bpy.types.PropertyGroup):
     )
 
 
+class R3FObjectSettings(bpy.types.PropertyGroup):
+    """Per-mesh flags, stored on each Object so they travel with it."""
+
+    include: bpy.props.BoolProperty(
+        name="Include",
+        description="Export this mesh into the GLB and component",
+        default=True,
+    )
+    cast_shadow: bpy.props.BoolProperty(
+        name="Cast Shadow",
+        description="Add the castShadow prop to this mesh",
+        default=True,
+    )
+    receive_shadow: bpy.props.BoolProperty(
+        name="Receive Shadow",
+        description="Add the receiveShadow prop to this mesh",
+        default=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # GLB reading — pull the JSON chunk out of the .glb we just exported
 # ---------------------------------------------------------------------------
@@ -290,8 +310,28 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
 # ---------------------------------------------------------------------------
 
 def export_glb(context, glb_path):
-    """Run Blender's glTF exporter for the whole scene."""
-    bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
+    """Run Blender's glTF exporter, honouring the per-mesh include flags."""
+    excluded = {obj for obj in context.scene.objects
+                if obj.type == "MESH" and not obj.r3f.include}
+
+    if not excluded:
+        bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
+        return
+
+    # The glTF exporter can't skip arbitrary objects, but it can export
+    # "selected only" - so select everything except the excluded meshes,
+    # export, then restore the user's selection.
+    prev_selected = [o for o in context.scene.objects if o.select_get()]
+    prev_active = context.view_layer.objects.active
+    for obj in context.scene.objects:
+        obj.select_set(obj not in excluded)
+    try:
+        bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB",
+                                  use_selection=True)
+    finally:
+        for obj in context.scene.objects:
+            obj.select_set(obj in prev_selected)
+        context.view_layer.objects.active = prev_active
 
 
 def build_component(context, glb_path):
@@ -303,8 +343,13 @@ def build_component(context, glb_path):
     typescript = settings.language == "TSX"
     ext = "tsx" if typescript else "jsx"
 
+    shadows = {
+        obj.name: (obj.r3f.cast_shadow, obj.r3f.receive_shadow)
+        for obj in context.scene.objects if obj.type == "MESH"
+    }
+
     gltf = read_glb_json(glb_path)
-    code = generate_jsx(gltf, component, f"/{stem}.glb", typescript)
+    code = generate_jsx(gltf, component, f"/{stem}.glb", typescript, shadows)
     return code, f"{component}.{ext}"
 
 
@@ -382,6 +427,24 @@ class R3F_PT_panel(bpy.types.Panel):
         row = col.row(align=True)
         row.prop(settings, "language", expand=True)
 
+        # Per-mesh list: include in export, castShadow, receiveShadow
+        box = layout.box()
+        header = box.row()
+        header.label(text="Meshes", icon="OUTLINER_OB_MESH")
+        sub = header.row()
+        sub.alignment = "RIGHT"
+        sub.label(text="Cast / Recv")
+        for obj in context.scene.objects:
+            if obj.type != "MESH":
+                continue
+            row = box.row(align=True)
+            row.prop(obj.r3f, "include", text="")
+            sub = row.row(align=True)
+            sub.active = obj.r3f.include  # gray out when excluded
+            sub.label(text=obj.name)
+            sub.prop(obj.r3f, "cast_shadow", text="")
+            sub.prop(obj.r3f, "receive_shadow", text="")
+
         layout.separator()
         row = layout.row()
         row.scale_y = 1.6
@@ -392,16 +455,18 @@ class R3F_PT_panel(bpy.types.Panel):
 # Registration — what Blender calls when the addon is (un)ticked
 # ---------------------------------------------------------------------------
 
-classes = (R3FSettings, R3F_OT_export, R3F_PT_panel)
+classes = (R3FSettings, R3FObjectSettings, R3F_OT_export, R3F_PT_panel)
 
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.r3f = bpy.props.PointerProperty(type=R3FSettings)
+    bpy.types.Object.r3f = bpy.props.PointerProperty(type=R3FObjectSettings)
 
 
 def unregister():
+    del bpy.types.Object.r3f
     del bpy.types.Scene.r3f
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
