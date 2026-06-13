@@ -3,6 +3,14 @@
 Thanks for your interest! This is a small, single-file Blender addon, so
 contributing is deliberately low-effort.
 
+## Where to start
+
+Browse the [open issues](../../issues) — anything tagged **good first issue**
+is a self-contained place to jump in. The
+[Roadmap](README.md#roadmap) sketches the bigger features on the horizon. No
+issue for your idea? Open one before sending a large PR so we can talk it
+through first.
+
 ## Project layout
 
 | File | What it is |

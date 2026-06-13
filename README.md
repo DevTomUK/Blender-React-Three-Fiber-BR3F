@@ -89,6 +89,33 @@ they all serve the `public/` folder at the web root.
 - **Settings stick** — export options are stored in the `.blend` file;
   per-mesh flags are stored on the objects themselves.
 
+## Roadmap
+
+Where BR3F might go next — ideas, not promises, and all open to contribution.
+Got a use case or want to pick one up? [Open an issue](../../issues).
+
+**v0.2 — closing the obvious gaps**
+
+- [ ] Export animations and wire up drei's `useAnimations`
+- [ ] Scope the export to a chosen collection or the current selection
+- [ ] Draco compression toggle for smaller `.glb` files
+
+**v0.3 — nice-to-haves**
+
+- [ ] Instancing / merging for repeated meshes (`<Instances>` / `<Merged>`)
+- [ ] Emit cameras and lights instead of skipping them
+- [ ] Copy-to-clipboard in the Preview window
+
+**v1.0 — platform & polish**
+
+- [ ] Blender 4.2+ extension manifest (`blender_manifest.toml`) for the
+      Extensions platform
+- [ ] Shape keys / morph target support
+
+**Project plumbing**
+
+- [ ] CI that runs `_smoke_test.py` on every pull request
+
 ## Contributing
 
 Bug reports, ideas and pull requests are welcome — see
