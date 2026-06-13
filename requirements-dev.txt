@@ -1,0 +1,7 @@
+# Editor-only type stubs for Blender's `bpy` module. Blender ships its own
+# Python interpreter with bpy built in, so this is NOT needed at runtime —
+# it just lets your editor resolve `import bpy` and offer autocomplete.
+#
+#   pip install -r requirements-dev.txt
+#
+fake-bpy-module-latest
