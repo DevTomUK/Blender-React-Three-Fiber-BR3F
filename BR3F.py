@@ -1,5 +1,8 @@
+import json
+import math
 import os
-
+import re
+import struct
 import bpy
 
 bl_info = {
@@ -51,6 +54,238 @@ class R3FSettings(bpy.types.PropertyGroup):
 
 
 # ---------------------------------------------------------------------------
+# GLB reading — pull the JSON chunk out of the .glb we just exported
+# ---------------------------------------------------------------------------
+
+def read_glb_json(path):
+    """A .glb is: 12-byte header, then chunks. The first chunk is the scene
+    JSON — that's all we need (geometry stays in the binary chunk)."""
+    with open(path, "rb") as f:
+        magic, version, _length = struct.unpack("<III", f.read(12))
+        if magic != 0x46546C67:  # b'glTF'
+            raise ValueError("Not a GLB file")
+        chunk_length, chunk_type = struct.unpack("<II", f.read(8))
+        if chunk_type != 0x4E4F534A:  # b'JSON'
+            raise ValueError("First GLB chunk is not JSON")
+        return json.loads(f.read(chunk_length))
+
+
+# ---------------------------------------------------------------------------
+# Naming — match what three.js GLTFLoader calls things at runtime
+# ---------------------------------------------------------------------------
+
+_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+
+
+def make_namer():
+    """GLTFLoader strips []/.: from names and dedupes repeats as name_1,
+    name_2... Reproduce that so `nodes.Cube001` matches runtime keys."""
+    counts = {}
+
+    def get(name):
+        clean = re.sub(r"[\[\].:\/]", "", re.sub(r"\s", "_", name or ""))
+        if clean in counts:
+            counts[clean] += 1
+            return f"{clean}_{counts[clean]}"
+        counts[clean] = 0
+        return clean
+
+    return get
+
+
+def access(obj, key):
+    """nodes.Cube when valid JS identifier, nodes['Cube.001'] otherwise."""
+    return f"{obj}.{key}" if _IDENTIFIER.match(key) else f"{obj}['{key}']"
+
+
+# ---------------------------------------------------------------------------
+# Transforms — glTF stores quaternions; R3F wants Euler angles
+# ---------------------------------------------------------------------------
+
+def quat_to_euler(q):
+    """Quaternion [x, y, z, w] -> XYZ Euler radians (three.js order)."""
+    x, y, z, w = q
+    m11 = 1 - 2 * (y * y + z * z)
+    m12 = 2 * (x * y - w * z)
+    m13 = 2 * (x * z + w * y)
+    m22 = 1 - 2 * (x * x + z * z)
+    m23 = 2 * (y * z - w * x)
+    m32 = 2 * (y * z + w * x)
+    m33 = 1 - 2 * (x * x + y * y)
+    ey = math.asin(max(-1.0, min(1.0, m13)))
+    if abs(m13) < 0.9999999:
+        return math.atan2(-m23, m33), ey, math.atan2(-m12, m11)
+    return math.atan2(m32, m22), ey, 0.0
+
+
+def num(value):
+    """3-decimal float without trailing zeros: 1.500 -> '1.5', -0.0 -> '0'."""
+    text = f"{round(value, 3):.3f}".rstrip("0").rstrip(".")
+    return "0" if text in ("-0", "") else text
+
+
+def transform_props(node):
+    """position/rotation/scale JSX props, omitting identity values."""
+    props = []
+    t = node.get("translation")
+    if t and any(abs(v) >= 0.0005 for v in t):
+        props.append(f"position={{[{', '.join(num(v) for v in t)}]}}")
+    q = node.get("rotation")
+    if q and q != [0, 0, 0, 1]:
+        euler = quat_to_euler(q)
+        if any(abs(a) >= 0.0005 for a in euler):
+            props.append(f"rotation={{[{', '.join(num(a) for a in euler)}]}}")
+    s = node.get("scale")
+    if s and any(abs(v - 1.0) >= 0.0005 for v in s):
+        props.append(f"scale={{[{', '.join(num(v) for v in s)}]}}")
+    return props
+
+
+# ---------------------------------------------------------------------------
+# Codegen — walk the glTF scene graph, emit JSX
+# ---------------------------------------------------------------------------
+
+def generate_jsx(gltf, component, url, typescript=False, shadows=None):
+    """shadows: {blender object name: (cast, receive)}. Meshes not in the
+    dict default to both on."""
+    shadows = shadows or {}
+    nodes = gltf.get("nodes", [])
+    meshes = gltf.get("meshes", [])
+    materials = gltf.get("materials", [])
+    scene = gltf.get("scenes", [{}])[gltf.get("scene", 0)]
+
+    # Names, in the same order GLTFLoader assigns them: scene nodes first
+    # (depth-first), then one name per mesh primitive.
+    unique = make_namer()
+    node_names = {}
+
+    def reserve(index):
+        if index not in node_names:
+            node_names[index] = unique(nodes[index].get("name", ""))
+            for child in nodes[index].get("children", []):
+                reserve(child)
+
+    for root in scene.get("nodes", []):
+        reserve(root)
+
+    mesh_names = {
+        i: [unique(m.get("name") or f"mesh_{i}") for _ in m.get("primitives", [])]
+        for i, m in enumerate(meshes)
+    }
+    material_names = {
+        i: m.get("name") or f"material_{i}" for i, m in enumerate(materials)
+    }
+
+    # Keys the body actually references, collected for the TS GLTFResult type
+    used_nodes = set()
+    used_materials = set()
+
+    def mesh_props(key, primitive, cast, receive):
+        used_nodes.add(key)
+        props = []
+        if cast:
+            props.append("castShadow")
+        if receive:
+            props.append("receiveShadow")
+        props.append(f"geometry={{{access('nodes', key)}.geometry}}")
+        mat = primitive.get("material")
+        if mat is not None:
+            used_materials.add(material_names[mat])
+            props.append(f"material={{{access('materials', material_names[mat])}}}")
+        return props
+
+    lines = []
+
+    def walk(index, depth):
+        node = nodes[index]
+        name = node_names[index]
+        children = node.get("children", [])
+        tprops = transform_props(node)
+        pad = "  " * depth
+
+        if "mesh" in node:
+            # Shadow flags are keyed by the raw Blender object name, which
+            # the glTF exporter writes as the node name
+            cast, receive = shadows.get(node.get("name"), (True, True))
+            primitives = meshes[node["mesh"]].get("primitives", [])
+            if len(primitives) > 1:
+                # A Blender mesh with several materials becomes several glTF
+                # primitives; GLTFLoader wraps them in a group named after
+                # the node.
+                head = " ".join([f'name="{name}"'] + tprops)
+                lines.append(f"{pad}<group {head}>")
+                for key, prim in zip(mesh_names[node["mesh"]], primitives):
+                    mprops = " ".join(mesh_props(key, prim, cast, receive))
+                    lines.append(f"{pad}  <mesh {mprops} />")
+                for child in children:
+                    walk(child, depth + 1)
+                lines.append(f"{pad}</group>")
+            else:
+                props = " ".join(
+                    mesh_props(name, primitives[0], cast, receive) + tprops)
+                if children:
+                    lines.append(f"{pad}<mesh {props}>")
+                    for child in children:
+                        walk(child, depth + 1)
+                    lines.append(f"{pad}</mesh>")
+                else:
+                    lines.append(f"{pad}<mesh {props} />")
+        elif children:
+            head = " ".join([f'name="{name}"'] + tprops)
+            lines.append(f"{pad}<group {head}>")
+            for child in children:
+                walk(child, depth + 1)
+            lines.append(f"{pad}</group>")
+        # Childless empties, cameras, lights: skipped.
+
+    for root in scene.get("nodes", []):
+        walk(root, 3)
+    body = "\n".join(lines)
+
+    def ts_key(key):
+        return key if _IDENTIFIER.match(key) else f"'{key}'"
+
+    out = ["/* Generated by R3F Export (https://github.com/DevTomUK/BR3F). "
+           "Please retain this attribution notice. */"]
+    if typescript:
+        out.append("import * as THREE from 'three'")
+    out.append("import React from 'react'")
+    out.append("import { useGLTF } from '@react-three/drei'")
+    if typescript:
+        out.append("import { GLTF } from 'three-stdlib'")
+    out.append("")
+
+    if typescript:
+        out.append("type GLTFResult = GLTF & {")
+        out.append("  nodes: {")
+        for key in sorted(used_nodes):
+            out.append(f"    {ts_key(key)}: THREE.Mesh")
+        out.append("  }")
+        out.append("  materials: {")
+        for key in sorted(used_materials):
+            out.append(f"    {ts_key(key)}: THREE.Material")
+        out.append("  }")
+        out.append("}")
+        out.append("")
+
+    props_sig = "props: JSX.IntrinsicElements['group']" if typescript else "props"
+    cast = " as GLTFResult" if typescript else ""
+    out.append(f"export function {component}({props_sig}) {{")
+    out.append(f"  const {{ nodes, materials }} = useGLTF('{url}'){cast}")
+    out.append("  return (")
+    out.append("    <group {...props} dispose={null}>")
+    if body:
+        out.append(body)
+    out.append("    </group>")
+    out.append("  )")
+    out.append("}")
+    out.append("")
+    out.append(f"useGLTF.preload('{url}')")
+    out.append("")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Operators — the Export button
 # ---------------------------------------------------------------------------
 
@@ -59,11 +294,25 @@ def export_glb(context, glb_path):
     bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
 
 
+def build_component(context, glb_path):
+    """Parse an exported GLB and generate the component source.
+    Returns (code, filename)."""
+    settings = context.scene.r3f
+    component = settings.component_name.strip() or "Model"
+    stem = component[0].lower() + component[1:]
+    typescript = settings.language == "TSX"
+    ext = "tsx" if typescript else "jsx"
+
+    gltf = read_glb_json(glb_path)
+    code = generate_jsx(gltf, component, f"/{stem}.glb", typescript)
+    return code, f"{component}.{ext}"
+
+
 class R3F_OT_export(bpy.types.Operator):
-    """Export the scene to .glb"""
+    """Export the scene to .glb and generate a React Three Fiber component"""
 
     bl_idname = "r3f.export"
-    bl_label = "Export GLB"
+    bl_label = "Export GLB + Component"
 
     def execute(self, context):
         settings = context.scene.r3f
@@ -77,10 +326,24 @@ class R3F_OT_export(bpy.types.Operator):
                                    ".blend first if using the default //)")
             return {"CANCELLED"}
 
+        # Empty component folder = write the .jsx next to the .glb
+        component_dir = glb_dir
+        if settings.component_dir.strip():
+            component_dir = bpy.path.abspath(settings.component_dir)
+            if not os.path.isdir(component_dir):
+                self.report({"ERROR"},
+                            f"Component folder doesn't exist: {component_dir}")
+                return {"CANCELLED"}
+
         glb_path = os.path.join(glb_dir, f"{stem}.glb")
         export_glb(context, glb_path)
+        code, filename = build_component(context, glb_path)
 
-        self.report({"INFO"}, f"Wrote {stem}.glb")
+        component_path = os.path.join(component_dir, filename)
+        with open(component_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(code)
+
+        self.report({"INFO"}, f"Wrote {stem}.glb + {filename}")
         return {"FINISHED"}
 
 
