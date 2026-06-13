@@ -9,8 +9,9 @@ dependencies.
 
 ## Status
 
-Early scaffolding. So far this adds a **BR3F** tab to the 3D viewport sidebar
-with a Component Name field. Export and codegen come next.
+In progress. The **BR3F** tab now has the full settings UI — Component Name,
+GLB and Component output folders, and a JSX / TSX language toggle. Export and
+codegen come next.
 
 ## Install
 
@@ -24,6 +25,10 @@ Works in Blender 3.6+.
 
 1. Press `N` in the 3D viewport and open the **BR3F** tab.
 2. Set the **Component Name** (e.g. `MyScene`).
+3. Point **GLB Folder** at your app's `public/` directory and
+   **Component Folder** at `src/components/` (leave the component folder
+   empty to write both files side by side).
+4. Pick **JSX** or **TSX**.
 
 ## License
 
