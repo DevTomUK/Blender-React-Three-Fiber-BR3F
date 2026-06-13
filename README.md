@@ -9,12 +9,12 @@ dependencies.
 
 ## Status
 
-Working end to end. One click exports the scene to a `.glb` **and** generates
-a matching React Three Fiber component (`.jsx` or `.tsx`) — node keys match
-what three.js `GLTFLoader` produces at runtime, quaternions are converted to
-Euler angles, and TSX output includes a typed `GLTFResult`. The panel lists
-every mesh with per-mesh **include / castShadow / receiveShadow** toggles. A
-code preview comes next.
+Feature complete. One click exports the scene to a `.glb` **and** generates a
+matching React Three Fiber component (`.jsx` or `.tsx`) — node keys match what
+three.js `GLTFLoader` produces at runtime, quaternions are converted to Euler
+angles, and TSX output includes a typed `GLTFResult`. The panel lists every
+mesh with per-mesh **include / castShadow / receiveShadow** toggles, and
+**Preview Code** shows the exact output before anything is written.
 
 ## Install
 
@@ -46,6 +46,24 @@ import { MyScene } from './components/MyScene'
   <MyScene position={[0, 0, 0]} />
 </Canvas>
 ```
+
+> 💡 **Tip:** hit **Preview Code** first to see exactly what BR3F will
+> generate — nothing is written to your project until you're happy.
+
+## Features
+
+- **Per-mesh control** — include/exclude each mesh and toggle its
+  `castShadow` / `receiveShadow` props individually.
+- **JSX or TSX** — TypeScript output includes a typed `GLTFResult` built from
+  the exact nodes and materials the component references.
+- **Preview Code** — opens the generated component in a new window before you
+  write anything to your project.
+- **Faithful output** — node keys match what three.js `GLTFLoader` produces at
+  runtime, rotations are converted from quaternions to Euler angles, identity
+  transforms are omitted, and multi-material meshes expand into a group the
+  same way the loader builds them.
+- **Settings stick** — export options are stored in the `.blend` file;
+  per-mesh flags are stored on the objects themselves.
 
 ## License
 

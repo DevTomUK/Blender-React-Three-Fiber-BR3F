@@ -3,6 +3,7 @@ import math
 import os
 import re
 import struct
+import tempfile
 import bpy
 
 bl_info = {
@@ -306,7 +307,7 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
 
 
 # ---------------------------------------------------------------------------
-# Operators — the Export button
+# Operators — shared pipeline + the Export and Preview buttons
 # ---------------------------------------------------------------------------
 
 def export_glb(context, glb_path):
@@ -392,6 +393,37 @@ class R3F_OT_export(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class R3F_OT_preview(bpy.types.Operator):
+    """Show the component this scene would generate, without writing
+    anything to your project"""
+
+    bl_idname = "r3f.preview"
+    bl_label = "Preview Code"
+
+    def execute(self, context):
+        # Export to a throwaway GLB in the OS temp folder, generate from
+        # that, then delete it - the user's folders are never touched.
+        glb_path = os.path.join(tempfile.gettempdir(), "r3f_preview.glb")
+        export_glb(context, glb_path)
+        code, filename = build_component(context, glb_path)
+        os.remove(glb_path)
+
+        # Put the code in a Text datablock (reused on re-preview) ...
+        text = bpy.data.texts.get(filename) or bpy.data.texts.new(filename)
+        text.clear()
+        text.write(code)
+        text.cursor_set(0)
+
+        # ... and show it in a fresh window switched to the Text Editor
+        bpy.ops.wm.window_new()
+        window = context.window_manager.windows[-1]
+        area = window.screen.areas[0]
+        area.type = "TEXT_EDITOR"
+        area.spaces.active.text = text
+
+        return {"FINISHED"}
+
+
 # ---------------------------------------------------------------------------
 # Panel — the UI in the N-sidebar
 # ---------------------------------------------------------------------------
@@ -449,13 +481,15 @@ class R3F_PT_panel(bpy.types.Panel):
         row = layout.row()
         row.scale_y = 1.6
         row.operator("r3f.export", icon="EXPORT")
+        layout.operator("r3f.preview", icon="SCRIPT")
 
 
 # ---------------------------------------------------------------------------
 # Registration — what Blender calls when the addon is (un)ticked
 # ---------------------------------------------------------------------------
 
-classes = (R3FSettings, R3FObjectSettings, R3F_OT_export, R3F_PT_panel)
+classes = (R3FSettings, R3FObjectSettings, R3F_OT_export, R3F_OT_preview,
+           R3F_PT_panel)
 
 
 def register():
