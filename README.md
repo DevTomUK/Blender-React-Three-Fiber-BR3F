@@ -9,9 +9,10 @@ dependencies.
 
 ## Status
 
-In progress. The **BR3F** tab now has the full settings UI — Component Name,
-GLB and Component output folders, and a JSX / TSX language toggle. Export and
-codegen come next.
+In progress. The **BR3F** tab has the full settings UI — Component Name, GLB
+and Component output folders, and a JSX / TSX language toggle — plus an
+**Export GLB** button that writes the scene to a `.glb`. Component codegen
+comes next.
 
 ## Install
 
@@ -29,6 +30,7 @@ Works in Blender 3.6+.
    **Component Folder** at `src/components/` (leave the component folder
    empty to write both files side by side).
 4. Pick **JSX** or **TSX**.
+5. Click **Export GLB** to write `<name>.glb` to the GLB folder.
 
 ## License
 

@@ -1,3 +1,7 @@
+import os
+
+import bpy
+
 bl_info = {
     "name": "BR3F — Blender React Three Fiber",
     "author": "Tom Heeley",
@@ -8,8 +12,6 @@ bl_info = {
     "category": "Import-Export",
     "doc_url": "https://github.com/DevTomUK/Blender-React-Three-Fiber-BR3F",
 }
-
-import bpy  # noqa: E402  (bl_info must precede imports; Blender reads it first)
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +51,40 @@ class R3FSettings(bpy.types.PropertyGroup):
 
 
 # ---------------------------------------------------------------------------
+# Operators — the Export button
+# ---------------------------------------------------------------------------
+
+def export_glb(context, glb_path):
+    """Run Blender's glTF exporter for the whole scene."""
+    bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
+
+
+class R3F_OT_export(bpy.types.Operator):
+    """Export the scene to .glb"""
+
+    bl_idname = "r3f.export"
+    bl_label = "Export GLB"
+
+    def execute(self, context):
+        settings = context.scene.r3f
+        component = settings.component_name.strip() or "Model"
+        # MyScene -> myScene, so the file is /myScene.glb
+        stem = component[0].lower() + component[1:]
+
+        glb_dir = bpy.path.abspath(settings.glb_dir)
+        if not os.path.isdir(glb_dir):
+            self.report({"ERROR"}, "GLB folder doesn't exist (save your "
+                                   ".blend first if using the default //)")
+            return {"CANCELLED"}
+
+        glb_path = os.path.join(glb_dir, f"{stem}.glb")
+        export_glb(context, glb_path)
+
+        self.report({"INFO"}, f"Wrote {stem}.glb")
+        return {"FINISHED"}
+
+
+# ---------------------------------------------------------------------------
 # Panel — the UI in the N-sidebar
 # ---------------------------------------------------------------------------
 
@@ -83,12 +119,17 @@ class R3F_PT_panel(bpy.types.Panel):
         row = col.row(align=True)
         row.prop(settings, "language", expand=True)
 
+        layout.separator()
+        row = layout.row()
+        row.scale_y = 1.6
+        row.operator("r3f.export", icon="EXPORT")
+
 
 # ---------------------------------------------------------------------------
 # Registration — what Blender calls when the addon is (un)ticked
 # ---------------------------------------------------------------------------
 
-classes = (R3FSettings, R3F_PT_panel)
+classes = (R3FSettings, R3F_OT_export, R3F_PT_panel)
 
 
 def register():
