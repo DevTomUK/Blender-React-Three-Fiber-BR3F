@@ -19,8 +19,9 @@ in one click, from inside Blender.**
 Blender scene  ──►  public/myScene.glb  +  src/components/MyScene.tsx (or .jsx)
 ```
 
-The whole addon is a single Python file: [`BR3F.py`](BR3F.py).
-No Node.js, no CLI, no dependencies.
+The add-on's logic is a single Python file: [`BR3F.py`](BR3F.py) — no Node.js,
+no CLI, no dependencies. (A small [`blender_manifest.toml`](blender_manifest.toml)
+and a one-line `__init__.py` wrap it for the Blender 4.2+ Extensions platform.)
 
 ## Why
 
@@ -37,11 +38,20 @@ meshes.
 
 ## Install
 
+### Blender 4.2+ (extension)
+
+1. Download the latest `br3f-x.y.z.zip` from the [Releases](../../releases)
+   page (or build it yourself — see
+   [CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
+2. Drag the `.zip` into Blender, or go to **Edit → Preferences → Add-ons → ⌄ →
+   Install from Disk…** and pick it.
+3. Enable **BR3F** in the add-on list.
+
+### Blender 3.6–4.1 (legacy single file)
+
 1. Download [`BR3F.py`](BR3F.py).
 2. In Blender: **Edit → Preferences → Add-ons → Install…** and pick the file.
-3. Enable **BR3F — Blender React Three Fiber** in the addon list.
-
-Works in Blender 3.6+.
+3. Enable **BR3F — Blender React Three Fiber** in the add-on list.
 
 ## Use
 
@@ -108,8 +118,9 @@ Got a use case or want to pick one up? [Open an issue](../../issues).
 
 **v1.0 — platform & polish**
 
-- [ ] Blender 4.2+ extension manifest (`blender_manifest.toml`) for the
+- [x] Blender 4.2+ extension manifest (`blender_manifest.toml`) for the
       Extensions platform
+- [ ] Publish BR3F on [extensions.blender.org](https://extensions.blender.org)
 - [ ] Shape keys / morph target support
 
 **Project plumbing**

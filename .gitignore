@@ -1,1 +1,4 @@
 __pycache__/
+
+# Built extension packages
+*.zip

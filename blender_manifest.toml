@@ -1,0 +1,43 @@
+schema_version = "1.0.0"
+
+id = "br3f"
+version = "0.1.0"
+name = "BR3F - Blender React Three Fiber"
+tagline = "Export GLB + React Three Fiber JSX/TSX component in one click"
+maintainer = "Tom Heeley"
+type = "add-on"
+
+website = "https://github.com/DevTomUK/Blender-React-Three-Fiber-BR3F"
+
+# https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
+tags = ["Import-Export", "Pipeline"]
+
+# The Extensions platform requires Blender 4.2+. Older versions (3.6-4.1) can
+# still install BR3F.py directly as a legacy add-on.
+blender_version_min = "4.2.0"
+
+# https://spdx.org/licenses/
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+copyright = [
+  "2026 Tom Heeley",
+]
+
+# BR3F writes the exported GLB and the generated component to disk.
+[permissions]
+files = "Write the exported GLB and generated JSX/TSX component to your project folders"
+
+# Keep the packaged extension lean — ship only the add-on, manifest and licence.
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/.gitignore",
+  "/*.zip",
+  "/_smoke_test.py",
+  "/requirements-dev.txt",
+  "/CONTRIBUTING.md",
+  "/README.md",
+  "/BR3F.png",
+]

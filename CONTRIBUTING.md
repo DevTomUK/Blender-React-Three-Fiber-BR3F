@@ -15,9 +15,12 @@ through first.
 
 | File | What it is |
 | --- | --- |
-| `BR3F.py` | The entire addon. Organised into labelled sections (settings, GLB reading, naming, transforms, codegen, operators, panel, registration). |
+| `BR3F.py` | The entire add-on. Organised into labelled sections (settings, GLB reading, naming, transforms, codegen, operators, panel, registration). |
+| `__init__.py` | One-line extension entry point — re-exports `register`/`unregister` from `BR3F.py` so Blender 4.2+ can load it as an extension. All real code stays in `BR3F.py`. |
+| `blender_manifest.toml` | Extension metadata for the Blender 4.2+ Extensions platform (id, version, license, permissions). Replaces `bl_info` on 4.2+; `bl_info` is kept for the legacy single-file install on 3.6–4.1. |
 | `_smoke_test.py` | A standalone test for the code generator. Stubs out `bpy` so it runs with plain Python. |
 | `requirements-dev.txt` | Editor-only type stubs (`fake-bpy-module`) so your editor can resolve `import bpy`. Not needed at runtime. |
+| `LICENSE` | GPL-3.0 licence text. |
 
 ## Development setup
 
@@ -84,8 +87,9 @@ bugs are visible right there in the terminal.
 
 ## Code style
 
-- Keep it to the **single file**. The whole point of the addon is that it
-  installs as one `.py`.
+- Keep the real code in the **single file** `BR3F.py`. `__init__.py` is just a
+  thin extension shim — don't grow it. The whole point is that the add-on is
+  one readable `.py`.
 - Match the existing section layout and comment style. Comments explain
   *why* (especially where we mirror three.js `GLTFLoader` behaviour), not
   *what*.
@@ -101,23 +105,36 @@ bugs are visible right there in the terminal.
 
 ## Releasing
 
-Versioning is manual and deliberate. The version lives in exactly one place —
-`bl_info["version"]` in `BR3F.py`, as a `(major, minor, patch)` tuple — and
-that's the number Blender shows in the add-on list. Pre-1.0, treat it loosely:
-bump **patch** for fixes and **minor** for new features (which may still
-change behaviour).
+Versioning is manual and deliberate. The version lives in **two** places that
+must stay in sync:
+
+- `bl_info["version"]` in `BR3F.py` — the `(major, minor, patch)` tuple Blender
+  shows for the legacy add-on.
+- `version` in `blender_manifest.toml` — the same number as a
+  `"major.minor.patch"` string, used by the Extensions platform.
+
+Pre-1.0, treat it loosely: bump **patch** for fixes and **minor** for new
+features (which may still change behaviour).
 
 To cut a release:
 
-1. Bump `bl_info["version"]` in `BR3F.py` and commit.
-2. Tag the commit to match: `git tag v0.2.0` (keep the tag and the tuple in
+1. Bump the version in **both** `BR3F.py` and `blender_manifest.toml`, and
+   commit.
+2. Tag the commit to match: `git tag v0.2.0` (keep the tag and the version in
    sync).
-3. `git push && git push --tags`.
-4. On GitHub, draft a Release from the tag and attach `BR3F.py` so people can
-   download the exact file.
+3. Build the extension zip with Blender:
+   ```
+   blender --command extension validate
+   blender --command extension build
+   ```
+   `build` produces `br3f-0.2.0.zip`, honouring the `[build]` excludes in the
+   manifest; `validate` catches manifest problems first.
+4. `git push && git push --tags`.
+5. On GitHub, draft a Release from the tag and attach both `br3f-x.y.z.zip`
+   (for Blender 4.2+) and `BR3F.py` (for the legacy single-file install).
 
-That's the whole flow — no build step, no CI. The single `.py` *is* the
-release artifact.
+No build step is needed to *develop* — the single `.py` runs as-is. The zip is
+only assembled at release time for the Extensions platform.
 
 ## Reporting bugs
 
