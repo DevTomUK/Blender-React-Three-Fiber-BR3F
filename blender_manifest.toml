@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 
 id = "br3f"
 version = "0.1.0"
-name = "BR3F - Blender React Three Fiber"
+name = "R3F JSX/TSX Exporter"
 tagline = "Export GLB + React Three Fiber JSX/TSX component in one click"
 maintainer = "Tom Heeley"
 type = "add-on"

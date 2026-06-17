@@ -7,7 +7,7 @@ import tempfile
 import bpy
 
 bl_info = {
-    "name": "BR3F — Blender React Three Fiber",
+    "name": "R3F JSX/TSX Exporter",
     "author": "Tom Heeley",
     "version": (0, 1, 0),
     "blender": (3, 6, 0),
@@ -429,7 +429,7 @@ class R3F_OT_preview(bpy.types.Operator):
 # ---------------------------------------------------------------------------
 
 class R3F_PT_panel(bpy.types.Panel):
-    bl_label = "Blender React Three Fiber Exporter"
+    bl_label = "R3F JSX/TSX Exporter"
     bl_idname = "R3F_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"

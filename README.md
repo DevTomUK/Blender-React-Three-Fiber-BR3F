@@ -38,6 +38,9 @@ meshes.
 
 ## Install
 
+> **BR3F** is the project name; in Blender the add-on installs as
+> **R3F JSX/TSX Exporter** and adds a **BR3F** tab to the 3D viewport sidebar.
+
 ### Blender 4.2+ (extension)
 
 1. Download the latest `br3f-x.y.z.zip` from the [Releases](../../releases)
@@ -45,13 +48,13 @@ meshes.
    [CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
 2. Drag the `.zip` into Blender, or go to **Edit → Preferences → Add-ons → ⌄ →
    Install from Disk…** and pick it.
-3. Enable **BR3F** in the add-on list.
+3. Enable **R3F JSX/TSX Exporter** in the add-on list.
 
 ### Blender 3.6–4.1 (legacy single file)
 
 1. Download [`BR3F.py`](BR3F.py).
 2. In Blender: **Edit → Preferences → Add-ons → Install…** and pick the file.
-3. Enable **BR3F — Blender React Three Fiber** in the add-on list.
+3. Enable **R3F JSX/TSX Exporter** in the add-on list.
 
 ## Use
 
