@@ -26,7 +26,7 @@ copyright = [
 
 # BR3F writes the exported GLB and the generated component to disk.
 [permissions]
-files = "Write the exported GLB and generated JSX/TSX component to your project folders"
+files = "Write the .glb and generated component to your project folders"
 
 # Keep the packaged extension lean — ship only the add-on, manifest and licence.
 [build]
