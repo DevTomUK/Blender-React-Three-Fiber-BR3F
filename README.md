@@ -6,7 +6,10 @@
 [React Three Fiber](https://github.com/pmndrs/react-three-fiber) component —
 in one click, from inside Blender.**
 
-[Download at Blender Addons](https://extensions.blender.org/add-ons/br3f/)
+## Try now at extensions.blender.org:
+```
+[extensions.blender.org - BR3F](https://extensions.blender.org/add-ons/br3f/)
+```
 
 [![Blender](https://img.shields.io/badge/Blender-3.6%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
 [![React Three Fiber](https://img.shields.io/badge/React%20Three%20Fiber-ready-61dafb?logo=react&logoColor=white)](https://github.com/pmndrs/react-three-fiber)
