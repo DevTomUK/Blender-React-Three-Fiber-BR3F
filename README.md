@@ -139,7 +139,7 @@ Bug reports, ideas and pull requests are welcome — see
 
 GPL-3.0-or-later (as required for Blender addons).
 
-Generated components include a short attribution comment — please keep it
+Generated components no longer include a short attribution comment - Blender Addons wouldn't allow it :(.
 intact.
 
 ---
