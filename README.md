@@ -71,7 +71,9 @@ meshes.
 4. Pick **JSX** or **TSX**.
 5. In the **Meshes** list, tick which meshes to include and toggle their
    `castShadow` / `receiveShadow` props individually.
-6. Click **Export GLB + Component**.
+6. If your scene is animated, hit the ⟳ button in the **Animations** box to
+   list the clips, then tick the ones you want and rename them if you like.
+7. Click **Export GLB + Component**.
 
 Then use it like any other component:
 
@@ -87,6 +89,29 @@ The generated component loads the model with drei's `useGLTF` from
 `/<name>.glb` — which works out of the box with Vite, Next.js and CRA, since
 they all serve the `public/` folder at the web root.
 
+When the export includes animations, the component also gets drei's
+`useAnimations` — plus a worked example you can keep or throw away. BR3F
+writes a `playOnce` helper, an `onClick` on the first mesh so you can click
+the model and watch a clip run, and a comment block explaining how to drive
+it yourself:
+
+```jsx
+// Play a clip once, holding its last frame when it finishes.
+const playOnce = (name) => {
+  const action = actions[name]
+  if (!action) return
+  action.reset()
+  action.setLoop(LoopOnce, 1)
+  action.clampWhenFinished = true
+  action.play()
+}
+```
+
+> 💡 `console.log(actions)` prints `{}` — that's normal. drei defines each key
+> as a lazy getter, so devtools won't evaluate them, and they stay `undefined`
+> until the root ref is attached. `actions.Idle` inside an effect or a handler
+> works fine; `names` gives you the list.
+
 > 💡 **Tip:** hit **Preview Code** first to see exactly what BR3F will
 > generate — no files written until you're happy.
 
@@ -95,6 +120,13 @@ they all serve the `public/` folder at the web root.
 - **Per-mesh control** — the panel lists every mesh in the scene with
   checkboxes to include/exclude it from the export and to toggle its
   `castShadow` / `receiveShadow` props individually.
+- **Animations** — the **Animations** box lists every mesh and armature with a
+  checkbox that's greyed out when nothing animates it. Expand a row to see its
+  clips, tick the ones you want, and rename any of them — the name you type is
+  the key you look up in `actions`. Animated components are generated with
+  drei's `useAnimations` wired to a ref on the root group, a ready-to-run
+  `playOnce` example, and — for rigged models — `<skinnedMesh>` +
+  `<primitive object={nodes.Bone} />` so skeletal animation actually plays.
 - **JSX or TSX** — TypeScript output includes a typed `GLTFResult` built
   from the exact nodes and materials the component references.
 - **Preview Code** — opens the generated component in a new window before
@@ -114,7 +146,7 @@ Got a use case or want to pick one up? [Open an issue](../../issues).
 
 **v0.2 — closing the obvious gaps**
 
-- [ ] Export animations and wire up drei's `useAnimations`
+- [x] Export animations and wire up drei's `useAnimations`
 - [ ] Scope the export to a chosen collection or the current selection
 - [ ] Draco compression toggle for smaller `.glb` files
 

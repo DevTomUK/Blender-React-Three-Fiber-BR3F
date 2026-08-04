@@ -15,7 +15,7 @@ through first.
 
 | File | What it is |
 | --- | --- |
-| `BR3F.py` | The entire add-on. Organised into labelled sections (settings, GLB reading, naming, transforms, codegen, operators, panel, registration). |
+| `BR3F.py` | The entire add-on. Organised into labelled sections (settings, GLB I/O, naming, transforms, codegen, animations, operators, panel, registration). |
 | `__init__.py` | One-line extension entry point — re-exports `register`/`unregister` from `BR3F.py` so Blender 4.2+ can load it as an extension. All real code stays in `BR3F.py`. |
 | `blender_manifest.toml` | Extension metadata for the Blender 4.2+ Extensions platform (id, version, license, permissions). Replaces `bl_info` on 4.2+; `bl_info` is kept for the legacy single-file install on 3.6–4.1. |
 | `_smoke_test.py` | A standalone test for the code generator. Stubs out `bpy` so it runs with plain Python. |
@@ -51,9 +51,9 @@ From the project root:
 python _smoke_test.py
 ```
 
-You should see two blocks printed to the terminal — `---- JSX` and
-`---- TSX` — each a complete generated component. If the script raises
-instead of printing, you've broken something; read the traceback.
+You should see a short `---- clip owners` table followed by two blocks —
+`---- JSX` and `---- TSX` — each a complete generated component. If the script
+raises instead of printing, you've broken something; read the traceback.
 
 ### How it works
 
@@ -65,9 +65,11 @@ instead of printing, you've broken something; read the traceback.
    (`bpy.types.*`, `bpy.props.*`).
 2. Defines a hand-written glTF dictionary — the same JSON shape
    `read_glb_json` would return — covering the tricky cases: a duplicated
-   name (`Cube` / `Cube.001`), a rotation, a nested group, and a
-   multi-material mesh.
-3. Calls `generate_jsx(...)` twice (JSX and TSX) and prints the result.
+   name (`Cube` / `Cube.001`), a rotation, a nested group, a multi-material
+   mesh, a skinned mesh under an armature, and three animation clips (one on
+   bones, one on an object, one spanning two objects).
+3. Calls `clip_owners(...)` to show which object each clip is attributed to,
+   then `generate_jsx(...)` twice (JSX and TSX) and prints the result.
 
 Because it bypasses Blender entirely, the round trip is instant: edit the
 codegen, re-run, read the diff in the output.
@@ -84,6 +86,29 @@ the same PR**:
 
 Eyeball both the JSX and TSX blocks before testing in Blender; most codegen
 bugs are visible right there in the terminal.
+
+## How animations flow through the add-on
+
+Worth knowing before you touch that code, because the order is deliberate:
+
+1. Blender's glTF exporter names clips inconsistently across versions (the
+   action name, the NLA track name, or both joined), so BR3F never guesses.
+   The clip list is read back out of a real export — **Scan Animations** runs a
+   throwaway one, and every Export/Preview refreshes the list for free.
+2. `clip_owners` attributes each clip to a Blender object by following its
+   channels to their target nodes and climbing to the top-most ancestor —
+   that's how a clip on a character's bones ends up filed under the armature.
+   Clips driving more than one object get no owner and are listed under
+   *Scene*.
+3. `sync_animations` merges that list into `scene.r3f.animations`, preserving
+   the ticks and renames for clips that still exist.
+4. `apply_animation_settings` drops the unticked clips and applies the renames
+   to the parsed JSON, and `rewrite_glb_json` writes it back into the `.glb` —
+   the binary chunk is copied through untouched. Dropped clips therefore leave
+   their (unreferenced) keyframe data in the file; excluding *every* clip skips
+   animation export entirely instead.
+5. `generate_jsx` reads the surviving clips straight off the glTF dict, so it
+   stays `bpy`-free and the smoke test can drive it directly.
 
 ## Code style
 

@@ -4,12 +4,13 @@ import os
 import re
 import struct
 import tempfile
+import textwrap
 import bpy
 
 bl_info = {
     "name": "R3F JSX/TSX Exporter",
     "author": "Tom Heeley",
-    "version": (0, 1, 0),
+    "version": (0, 2, 0),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar (N) > BR3F",
     "description": "Export GLB + React Three Fiber JSX/TSX component in one click",
@@ -22,7 +23,34 @@ bl_info = {
 # Settings — stored on the Scene so they save with the .blend file
 # ---------------------------------------------------------------------------
 
+class R3FClipSettings(bpy.types.PropertyGroup):
+    """One animation clip found in an exported GLB.
+
+    The inherited ``name`` is the clip name Blender's glTF exporter produced.
+    We key off that rather than off the Blender action, because the exporter's
+    naming changes between versions (action name, NLA track name, or the two
+    joined) - reading it back from the file is the only reliable answer."""
+
+    export_name: bpy.props.StringProperty(
+        name="Name",
+        description="Name this clip gets in the GLB - the key you look it up "
+                    "by in drei's `actions`",
+        default="",
+    )
+    include: bpy.props.BoolProperty(
+        name="Include",
+        description="Export this clip",
+        default=True,
+    )
+    owner: bpy.props.StringProperty(
+        name="Owner",
+        description="Blender object this clip animates",
+        default="",
+    )
+
+
 class R3FSettings(bpy.types.PropertyGroup):
+    animations: bpy.props.CollectionProperty(type=R3FClipSettings)
     component_name: bpy.props.StringProperty(
         name="Component",
         description="Name of the generated React component",
@@ -55,7 +83,7 @@ class R3FSettings(bpy.types.PropertyGroup):
 
 
 class R3FObjectSettings(bpy.types.PropertyGroup):
-    """Per-mesh flags, stored on each Object so they travel with it."""
+    """Per-object flags, stored on each Object so they travel with it."""
 
     include: bpy.props.BoolProperty(
         name="Include",
@@ -72,10 +100,20 @@ class R3FObjectSettings(bpy.types.PropertyGroup):
         description="Add the receiveShadow prop to this mesh",
         default=True,
     )
+    export_animations: bpy.props.BoolProperty(
+        name="Animations",
+        description="Export the animation clips driven by this object",
+        default=True,
+    )
+    show_animations: bpy.props.BoolProperty(
+        name="Show Clips",
+        description="List this object's animation clips",
+        default=False,
+    )
 
 
 # ---------------------------------------------------------------------------
-# GLB reading — pull the JSON chunk out of the .glb we just exported
+# GLB I/O — the JSON chunk of the .glb we just exported, read and written back
 # ---------------------------------------------------------------------------
 
 def read_glb_json(path):
@@ -89,6 +127,26 @@ def read_glb_json(path):
         if chunk_type != 0x4E4F534A:  # b'JSON'
             raise ValueError("First GLB chunk is not JSON")
         return json.loads(f.read(chunk_length))
+
+
+def rewrite_glb_json(path, gltf):
+    """Put an edited scene JSON back into an existing .glb.
+
+    Only the first chunk is touched; the binary chunk is copied through
+    verbatim, so geometry and keyframe data are never re-encoded."""
+    with open(path, "rb") as f:
+        data = f.read()
+    json_length = struct.unpack_from("<I", data, 12)[0]
+    binary = data[20 + json_length:]  # the BIN chunk, header included
+
+    blob = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    blob += b" " * (-len(blob) % 4)  # chunks are padded to 4-byte boundaries
+    header = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(blob) + len(binary))
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(struct.pack("<II", len(blob), 0x4E4F534A))
+        f.write(blob)
+        f.write(binary)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +175,12 @@ def make_namer():
 def access(obj, key):
     """nodes.Cube when valid JS identifier, nodes['Cube.001'] otherwise."""
     return f"{obj}.{key}" if _IDENTIFIER.match(key) else f"{obj}['{key}']"
+
+
+def js_string(text):
+    """Single-quoted JS string literal — clip names are user-typed, so they
+    can contain quotes."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +230,84 @@ def transform_props(node):
 # Codegen — walk the glTF scene graph, emit JSX
 # ---------------------------------------------------------------------------
 
+def comment_safe(text):
+    """Clip names get quoted inside a /* */ block, where a literal */ would
+    close the comment early."""
+    return text.replace("*/", "*\\/")
+
+
+def play_once(clips, typescript):
+    """A helper the user can call from anywhere to fire a clip a single time.
+    Emitted only when the model actually has animations."""
+    signature = "name: ActionName" if typescript else "name"
+    # three is namespace-imported for the TS types; plain JSX only needs the
+    # one constant
+    loop_once = "THREE.LoopOnce" if typescript else "LoopOnce"
+    return [
+        "  // Play a clip once, holding its last frame when it finishes.",
+        f"  const playOnce = ({signature}) => {{",
+        "    const action = actions[name]",
+        "    if (!action) return",
+        "    action.reset()",
+        f"    action.setLoop({loop_once}, 1)",
+        "    action.clampWhenFinished = true",
+        "    action.play()",
+        "  }",
+    ]
+
+
+def animation_notes(clips):
+    """The explainer above the return: why `actions` looks empty, what the
+    example onClick is for, and what else there is to play."""
+    first = js_string(comment_safe(clips[0]))
+    paragraphs = [
+        "`actions` is keyed by clip name, but logging it prints {} - those "
+        "keys are lazy getters, so devtools won't run them, and they stay "
+        "undefined until the ref below is attached. Read one by name from an "
+        "effect or a handler and it's there. Add `names` to the destructure "
+        "above if you want the list itself at runtime.",
+        "The onClick further down is only an example: click the model and it "
+        f"plays {first}. Delete that prop and call playOnce from wherever "
+        "suits you instead - a useEffect on mount, a keypress, a button "
+        "outside the Canvas.",
+    ]
+
+    lines = ["  /* Driving the animations"]
+    for text in paragraphs:
+        lines.append("   *")
+        lines += [f"   * {line}" for line in textwrap.wrap(text, 68)]
+    others = clips[1:6]  # a taster, not the whole list
+    if others:
+        lines.append("   *")
+        lines.append("   * You could also try these!")
+        lines += [f"   *   playOnce({js_string(comment_safe(n))})" for n in others]
+    lines.append("   */")
+    return lines
+
+
 def generate_jsx(gltf, component, url, typescript=False, shadows=None):
     """shadows: {blender object name: (cast, receive)}. Meshes not in the
-    dict default to both on."""
+    dict default to both on. The animation wiring is driven by whatever clips
+    `gltf` still holds, so filter them out before calling."""
     shadows = shadows or {}
     nodes = gltf.get("nodes", [])
     meshes = gltf.get("meshes", [])
     materials = gltf.get("materials", [])
     scene = gltf.get("scenes", [{}])[gltf.get("scene", 0)]
+    clips = [a.get("name", "") for a in gltf.get("animations", [])]
+
+    # Skinning: every joint is a bone, and GLTFLoader has already parented
+    # them, so we only mount the roots — each root brings its subtree along.
+    # skin.skeleton is ignored on purpose: Blender points it at the armature
+    # node, which isn't a bone, and mounting that would duplicate the mesh.
+    joints = set()
+    bone_roots = set()
+    for skin in gltf.get("skins", []):
+        own = set(skin.get("joints", []))
+        joints.update(own)
+        parented = {child for j in own for child in nodes[j].get("children", [])
+                    if child in own}
+        bone_roots.update(own - parented)
 
     # Names, in the same order GLTFLoader assigns them: scene nodes first
     # (depth-first), then one name per mesh primitive.
@@ -197,12 +331,13 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
         i: m.get("name") or f"material_{i}" for i, m in enumerate(materials)
     }
 
-    # Keys the body actually references, collected for the TS GLTFResult type
-    used_nodes = set()
+    # Keys the body actually references, mapped to the three.js class the TS
+    # GLTFResult type should give them
+    used_nodes = {}
     used_materials = set()
 
-    def mesh_props(key, primitive, cast, receive):
-        used_nodes.add(key)
+    def mesh_props(key, primitive, cast, receive, skinned):
+        used_nodes[key] = "THREE.SkinnedMesh" if skinned else "THREE.Mesh"
         props = []
         if cast:
             props.append("castShadow")
@@ -213,7 +348,17 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
         if mat is not None:
             used_materials.add(material_names[mat])
             props.append(f"material={{{access('materials', material_names[mat])}}}")
+        if skinned:
+            props.append(f"skeleton={{{access('nodes', key)}.skeleton}}")
         return props
+
+    # The example handler goes on the first group or mesh we emit, and only
+    # that one — it's a starting point for the user, not a feature.
+    example_click = ([f"onClick={{() => playOnce({js_string(clips[0])})}}"]
+                     if clips else [])
+
+    def click_prop():
+        return [example_click.pop()] if example_click else []
 
     lines = []
 
@@ -224,35 +369,46 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
         tprops = transform_props(node)
         pad = "  " * depth
 
+        if index in joints:
+            if index in bone_roots:
+                used_nodes[name] = "THREE.Bone"
+                lines.append(f"{pad}<primitive object={{{access('nodes', name)}}} />")
+            return  # non-root bones ride along under their root
+
         if "mesh" in node:
             # Shadow flags are keyed by the raw Blender object name, which
             # the glTF exporter writes as the node name
             cast, receive = shadows.get(node.get("name"), (True, True))
+            skinned = "skin" in node
+            tag = "skinnedMesh" if skinned else "mesh"
             primitives = meshes[node["mesh"]].get("primitives", [])
             if len(primitives) > 1:
                 # A Blender mesh with several materials becomes several glTF
                 # primitives; GLTFLoader wraps them in a group named after
                 # the node.
-                head = " ".join([f'name="{name}"'] + tprops)
+                head = " ".join([f'name="{name}"'] + click_prop() + tprops)
                 lines.append(f"{pad}<group {head}>")
                 for key, prim in zip(mesh_names[node["mesh"]], primitives):
-                    mprops = " ".join(mesh_props(key, prim, cast, receive))
-                    lines.append(f"{pad}  <mesh {mprops} />")
+                    mprops = " ".join(
+                        mesh_props(key, prim, cast, receive, skinned))
+                    lines.append(f"{pad}  <{tag} {mprops} />")
                 for child in children:
                     walk(child, depth + 1)
                 lines.append(f"{pad}</group>")
             else:
                 props = " ".join(
-                    mesh_props(name, primitives[0], cast, receive) + tprops)
+                    click_prop()
+                    + mesh_props(name, primitives[0], cast, receive, skinned)
+                    + tprops)
                 if children:
-                    lines.append(f"{pad}<mesh {props}>")
+                    lines.append(f"{pad}<{tag} {props}>")
                     for child in children:
                         walk(child, depth + 1)
-                    lines.append(f"{pad}</mesh>")
+                    lines.append(f"{pad}</{tag}>")
                 else:
-                    lines.append(f"{pad}<mesh {props} />")
+                    lines.append(f"{pad}<{tag} {props} />")
         elif children:
-            head = " ".join([f'name="{name}"'] + tprops)
+            head = " ".join([f'name="{name}"'] + click_prop() + tprops)
             lines.append(f"{pad}<group {head}>")
             for child in children:
                 walk(child, depth + 1)
@@ -270,31 +426,57 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
            "Please retain this attribution notice. */"]
     if typescript:
         out.append("import * as THREE from 'three'")
-    out.append("import React from 'react'")
-    out.append("import { useGLTF } from '@react-three/drei'")
+    elif clips:
+        out.append("import { LoopOnce } from 'three'")
+    out.append(f"import React{', { useRef }' if clips else ''} from 'react'")
+    hooks = "useAnimations, useGLTF" if clips else "useGLTF"
+    out.append(f"import {{ {hooks} }} from '@react-three/drei'")
     if typescript:
         out.append("import { GLTF } from 'three-stdlib'")
     out.append("")
 
     if typescript:
+        if clips:
+            # Narrowing the clip names lets `actions.Idle` type-check
+            out.append(f"type ActionName = {' | '.join(map(js_string, clips))}")
+            out.append("")
+            out.append("interface GLTFAction extends THREE.AnimationClip {")
+            out.append("  name: ActionName")
+            out.append("}")
+            out.append("")
         out.append("type GLTFResult = GLTF & {")
         out.append("  nodes: {")
         for key in sorted(used_nodes):
-            out.append(f"    {ts_key(key)}: THREE.Mesh")
+            out.append(f"    {ts_key(key)}: {used_nodes[key]}")
         out.append("  }")
         out.append("  materials: {")
         for key in sorted(used_materials):
             out.append(f"    {ts_key(key)}: THREE.Material")
         out.append("  }")
+        if clips:
+            out.append("  animations: GLTFAction[]")
         out.append("}")
         out.append("")
 
     props_sig = "props: JSX.IntrinsicElements['group']" if typescript else "props"
     cast = " as GLTFResult" if typescript else ""
     out.append(f"export function {component}({props_sig}) {{")
-    out.append(f"  const {{ nodes, materials }} = useGLTF('{url}'){cast}")
+    if clips:
+        # useAnimations needs the mixer rooted at the object the clips
+        # address, so the outer group carries a ref
+        ref_init = "useRef<THREE.Group>(null)" if typescript else "useRef()"
+        out.append(f"  const group = {ref_init}")
+    loaded = "{ nodes, materials, animations }" if clips else "{ nodes, materials }"
+    out.append(f"  const {loaded} = useGLTF('{url}'){cast}")
+    if clips:
+        out.append("  const { actions } = useAnimations(animations, group)")
+        out.append("")
+        out += play_once(clips, typescript)
+        out.append("")
+        out += animation_notes(clips)
     out.append("  return (")
-    out.append("    <group {...props} dispose={null}>")
+    ref = "ref={group} " if clips else ""
+    out.append(f"    <group {ref}{{...props}} dispose={{null}}>")
     if body:
         out.append(body)
     out.append("    </group>")
@@ -307,16 +489,106 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
 
 
 # ---------------------------------------------------------------------------
+# Animations — reconcile the clips in a GLB with the per-object settings
+# ---------------------------------------------------------------------------
+
+def clip_owners(gltf):
+    """Name the Blender object behind each animation clip, in file order.
+
+    Channels target nodes, and for a rigged character those are bones - so
+    climb to the top-most ancestor, which is the node the exporter wrote for
+    the object itself. A clip driving several objects gets no owner and is
+    listed on its own instead."""
+    nodes = gltf.get("nodes", [])
+    parent = {}
+    for index, node in enumerate(nodes):
+        for child in node.get("children", []):
+            parent[child] = index
+
+    def root_name(index):
+        seen = set()
+        while index in parent and index not in seen:
+            seen.add(index)
+            index = parent[index]
+        return nodes[index].get("name", "")
+
+    owners = []
+    for anim in gltf.get("animations", []):
+        roots = {root_name(channel["target"]["node"])
+                 for channel in anim.get("channels", [])
+                 if channel.get("target", {}).get("node") is not None}
+        owners.append(roots.pop() if len(roots) == 1 else "")
+    return owners
+
+
+def sync_animations(scene, gltf):
+    """Refresh the scene's clip list from a GLB we just exported, keeping the
+    renames and tick boxes the user already set for clips that still exist."""
+    previous = {clip.name: (clip.include, clip.export_name)
+                for clip in scene.r3f.animations}
+    owners = clip_owners(gltf)
+    scene.r3f.animations.clear()
+    for anim, owner in zip(gltf.get("animations", []), owners):
+        name = anim.get("name", "")
+        clip = scene.r3f.animations.add()
+        clip.name = name
+        clip.owner = owner
+        clip.include, clip.export_name = previous.get(name, (True, name))
+
+
+def clip_enabled(scene, clip):
+    """A clip ships if both its own tick box and its object's are on."""
+    owner = scene.objects.get(clip.owner) if clip.owner else None
+    if owner is not None and not owner.r3f.export_animations:
+        return False
+    return clip.include
+
+
+def wants_animations(scene):
+    """Whether Blender should bother exporting animation at all. False only
+    once we know the clip list and every clip in it has been excluded."""
+    clips = scene.r3f.animations
+    if not clips:
+        return True
+    return any(clip_enabled(scene, clip) for clip in clips)
+
+
+def apply_animation_settings(scene, gltf):
+    """Sync the clip list from this export, then drop the clips the user
+    unticked and apply their renames. Mutates `gltf`.
+
+    Dropped clips leave their keyframe data behind in the binary chunk -
+    unreferenced, so loaders ignore it, but it still costs a few KB. Excluding
+    *every* clip avoids that: then we skip animation export entirely."""
+    sync_animations(scene, gltf)
+    kept = []
+    for anim, clip in zip(gltf.get("animations", []), scene.r3f.animations):
+        if not clip_enabled(scene, clip):
+            continue
+        anim["name"] = clip.export_name.strip() or clip.name
+        kept.append(anim)
+    if kept:
+        gltf["animations"] = kept
+    else:
+        gltf.pop("animations", None)
+
+
+# ---------------------------------------------------------------------------
 # Operators — shared pipeline + the Export and Preview buttons
 # ---------------------------------------------------------------------------
 
-def export_glb(context, glb_path):
-    """Run Blender's glTF exporter, honouring the per-mesh include flags."""
+def export_glb(context, glb_path, animations=None):
+    """Run Blender's glTF exporter, honouring the per-mesh include flags.
+    `animations` overrides the per-clip settings — the scan pass forces it on
+    so it can see everything the scene produces."""
     excluded = {obj for obj in context.scene.objects
                 if obj.type == "MESH" and not obj.r3f.include}
+    if animations is None:
+        animations = wants_animations(context.scene)
 
     if not excluded:
-        bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB")
+        bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB",
+                                  export_animations=animations)
         return
 
     # The glTF exporter can't skip arbitrary objects, but it can export
@@ -328,7 +600,8 @@ def export_glb(context, glb_path):
         obj.select_set(obj not in excluded)
     try:
         bpy.ops.export_scene.gltf(filepath=glb_path, export_format="GLB",
-                                  use_selection=True)
+                                  use_selection=True,
+                                  export_animations=animations)
     finally:
         for obj in context.scene.objects:
             obj.select_set(obj in prev_selected)
@@ -336,8 +609,8 @@ def export_glb(context, glb_path):
 
 
 def build_component(context, glb_path):
-    """Parse an exported GLB and generate the component source.
-    Returns (code, filename)."""
+    """Parse an exported GLB, apply the animation settings to it in place, and
+    generate the component source. Returns (code, filename)."""
     settings = context.scene.r3f
     component = settings.component_name.strip() or "Model"
     stem = component[0].lower() + component[1:]
@@ -350,8 +623,33 @@ def build_component(context, glb_path):
     }
 
     gltf = read_glb_json(glb_path)
+    if "animations" in gltf:
+        apply_animation_settings(context.scene, gltf)
+        rewrite_glb_json(glb_path, gltf)
+
     code = generate_jsx(gltf, component, f"/{stem}.glb", typescript, shadows)
     return code, f"{component}.{ext}"
+
+
+class R3F_OT_scan_animations(bpy.types.Operator):
+    """List the animation clips this scene exports, so you can rename them and
+    pick which ones ship. Runs a throwaway export - nothing is written to your
+    project"""
+
+    bl_idname = "r3f.scan_animations"
+    bl_label = "Scan Animations"
+
+    def execute(self, context):
+        glb_path = os.path.join(tempfile.gettempdir(), "r3f_scan.glb")
+        export_glb(context, glb_path, animations=True)
+        try:
+            sync_animations(context.scene, read_glb_json(glb_path))
+        finally:
+            os.remove(glb_path)
+
+        count = len(context.scene.r3f.animations)
+        self.report({"INFO"}, f"Found {count} animation clip(s)")
+        return {"FINISHED"}
 
 
 class R3F_OT_export(bpy.types.Operator):
@@ -477,19 +775,79 @@ class R3F_PT_panel(bpy.types.Panel):
             sub.prop(obj.r3f, "cast_shadow", text="")
             sub.prop(obj.r3f, "receive_shadow", text="")
 
+        self.draw_animations(context, layout)
+
         layout.separator()
         row = layout.row()
         row.scale_y = 1.6
         row.operator("r3f.export", icon="EXPORT")
         layout.operator("r3f.preview", icon="SCRIPT")
 
+    def draw_animations(self, context, layout):
+        """Per-object animation toggles, each expanding into its clips.
+
+        The list comes from a real export (the Scan button, and every
+        Export/Preview refreshes it), because only the exported GLB knows what
+        Blender's animation naming produced."""
+        clips = context.scene.r3f.animations
+
+        box = layout.box()
+        header = box.row()
+        header.label(text="Animations", icon="ACTION")
+        sub = header.row()
+        sub.alignment = "RIGHT"
+        sub.operator("r3f.scan_animations", text="", icon="FILE_REFRESH")
+
+        if not clips:
+            box.label(text="Scan to list clips", icon="INFO")
+
+        for obj in context.scene.objects:
+            if obj.type not in {"MESH", "ARMATURE"}:
+                continue
+            owned = [clip for clip in clips if clip.owner == obj.name]
+
+            row = box.row(align=True)
+            toggle = row.row(align=True)
+            toggle.enabled = bool(owned)  # nothing to export, nothing to tick
+            toggle.prop(obj.r3f, "export_animations", text="")
+            toggle.prop(obj.r3f, "show_animations", text="", emboss=False,
+                        icon="TRIA_DOWN" if obj.r3f.show_animations
+                        else "TRIA_RIGHT")
+            row.label(text=obj.name)
+            count = row.row()
+            count.alignment = "RIGHT"
+            count.label(text=str(len(owned)) if owned else "—")
+
+            if owned and obj.r3f.show_animations:
+                col = box.column(align=True)
+                col.active = obj.r3f.export_animations
+                for clip in owned:
+                    self.draw_clip(col, clip)
+
+        # Clips driving several objects at once belong to no single row
+        loose = [clip for clip in clips
+                 if clip.owner not in context.scene.objects]
+        if loose:
+            box.label(text="Scene", icon="SCENE_DATA")
+            col = box.column(align=True)
+            for clip in loose:
+                self.draw_clip(col, clip)
+
+    def draw_clip(self, layout, clip):
+        row = layout.row(align=True)
+        row.prop(clip, "include", text="")
+        field = row.row(align=True)
+        field.active = clip.include
+        field.prop(clip, "export_name", text="")
+
 
 # ---------------------------------------------------------------------------
 # Registration — what Blender calls when the addon is (un)ticked
 # ---------------------------------------------------------------------------
 
-classes = (R3FSettings, R3FObjectSettings, R3F_OT_export, R3F_OT_preview,
-           R3F_PT_panel)
+# R3FClipSettings first — R3FSettings points a CollectionProperty at it
+classes = (R3FClipSettings, R3FSettings, R3FObjectSettings,
+           R3F_OT_scan_animations, R3F_OT_export, R3F_OT_preview, R3F_PT_panel)
 
 
 def register():
