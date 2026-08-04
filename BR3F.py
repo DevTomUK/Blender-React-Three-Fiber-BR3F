@@ -244,7 +244,7 @@ def play_once(clips, typescript):
     # one constant
     loop_once = "THREE.LoopOnce" if typescript else "LoopOnce"
     return [
-        "  // Play a clip once, holding its last frame when it finishes.",
+        "  // This is an example function which will play the animation clip once, holding its last frame when it finishes.",
         f"  const playOnce = ({signature}) => {{",
         "    const action = actions[name]",
         "    if (!action) return",
@@ -338,7 +338,11 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
 
     def mesh_props(key, primitive, cast, receive, skinned):
         used_nodes[key] = "THREE.SkinnedMesh" if skinned else "THREE.Mesh"
-        props = []
+        # The name is load-bearing, not decoration: animation tracks address
+        # their target as "<node name>.position", and three's PropertyBinding
+        # resolves that by searching the mixer root for a matching name. Leave
+        # it off and every track logs "No target node found".
+        props = [f'name="{key}"']
         if cast:
             props.append("castShadow")
         if receive:
@@ -396,10 +400,9 @@ def generate_jsx(gltf, component, url, typescript=False, shadows=None):
                     walk(child, depth + 1)
                 lines.append(f"{pad}</group>")
             else:
-                props = " ".join(
-                    click_prop()
-                    + mesh_props(name, primitives[0], cast, receive, skinned)
-                    + tprops)
+                props = mesh_props(name, primitives[0], cast, receive, skinned)
+                props[1:1] = click_prop()  # right after name=, easy to spot
+                props = " ".join(props + tprops)
                 if children:
                     lines.append(f"{pad}<{tag} {props}>")
                     for child in children:

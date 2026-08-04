@@ -37,9 +37,9 @@ models, that round trip adds up fast — every scene tweak means exporting
 *and* converting again, and the GLB and component quietly drift out of sync.
 
 BR3F does both steps natively in Blender. Tweak your scene, click **Export
-GLB + Component**, refresh your app. You can even set per-mesh preferences
-for the output, like adding `castShadow` or `receiveShadow` to individual
-meshes.
+GLB + Component**, refresh your app. You can also set per-mesh preferences for
+the output — `castShadow` / `receiveShadow` on individual meshes — and pick
+which animation clips ship, renaming them on the way out.
 
 ## Install
 
@@ -71,8 +71,7 @@ meshes.
 4. Pick **JSX** or **TSX**.
 5. In the **Meshes** list, tick which meshes to include and toggle their
    `castShadow` / `receiveShadow` props individually.
-6. If your scene is animated, hit the ⟳ button in the **Animations** box to
-   list the clips, then tick the ones you want and rename them if you like.
+6. Animated scene? See [Animations](#animations) just below.
 7. Click **Export GLB + Component**.
 
 Then use it like any other component:
@@ -89,72 +88,137 @@ The generated component loads the model with drei's `useGLTF` from
 `/<name>.glb` — which works out of the box with Vite, Next.js and CRA, since
 they all serve the `public/` folder at the web root.
 
-When the export includes animations, the component also gets drei's
-`useAnimations` — plus a worked example you can keep or throw away. BR3F
-writes a `playOnce` helper, an `onClick` on the first mesh so you can click
-the model and watch a clip run, and a comment block explaining how to drive
-it yourself:
+> 💡 **Tip:** hit **Preview Code** first to see exactly what BR3F will
+> generate — no files written until you're happy.
+
+## Animations
+
+The **Animations** box lists every mesh and armature in the scene, with the
+clips that drive it tucked underneath:
+
+```
+Animations                              ⟳
+[x] ▾ Armature                          3
+      [x] Idle
+      [x] Walk
+      [ ] TPose        ← unticked, so it won't be exported
+[ ] ▸ Cube                              —
+      ↑ greyed out: nothing animates this object
+```
+
+1. **Hit ⟳ once to scan.** BR3F runs a throwaway export to find out which
+   clips your scene actually produces, then files each one under the object it
+   drives. (Every **Export** and **Preview** refreshes the list too, so you
+   normally only press this at the start.)
+2. **Untick what you don't want.** The object-level checkbox is a master
+   switch for all its clips.
+3. **Rename freely.** Type over a clip name and that's the name it gets in the
+   `.glb` — which is the key you look it up by: `Walk` → `actions.Walk`.
+4. **Export.**
+
+Rigged characters work too. BR3F emits `<skinnedMesh>` with its `skeleton`,
+and mounts the armature's root bone as `<primitive object={nodes.Hips} />` —
+that's what makes skeletal animation actually play rather than load silently.
+
+> **Why scan at all?** Blender's glTF exporter names clips differently between
+> versions and depending on whether the action lives in an NLA track. Rather
+> than guess, BR3F reads the names back out of a real export — so what the
+> panel shows is exactly what lands in the file.
+
+### What you get
+
+Export an animated scene and the component arrives wired up, with a worked
+example you can keep or delete:
 
 ```jsx
-// Play a clip once, holding its last frame when it finishes.
-const playOnce = (name) => {
-  const action = actions[name]
-  if (!action) return
-  action.reset()
-  action.setLoop(LoopOnce, 1)
-  action.clampWhenFinished = true
-  action.play()
+import { LoopOnce } from 'three'
+import React, { useRef } from 'react'
+import { useAnimations, useGLTF } from '@react-three/drei'
+
+export function MyScene(props) {
+  const group = useRef()
+  const { nodes, materials, animations } = useGLTF('/myScene.glb')
+  const { actions } = useAnimations(animations, group)
+
+  // Play a clip once, holding its last frame when it finishes.
+  const playOnce = (name) => {
+    const action = actions[name]
+    if (!action) return
+    action.reset()
+    action.setLoop(LoopOnce, 1)
+    action.clampWhenFinished = true
+    action.play()
+  }
+
+  /* Driving the animations
+   *   ...a short explainer, plus "You could also try these!" listing
+   *   your other clips so you know what's in there.
+   */
+  return (
+    <group ref={group} {...props} dispose={null}>
+      <mesh name="Cube" onClick={() => playOnce('Idle')} ... />
+    </group>
+  )
 }
 ```
 
-> 💡 `console.log(actions)` prints `{}` — that's normal. drei defines each key
-> as a lazy getter, so devtools won't evaluate them, and they stay `undefined`
-> until the root ref is attached. `actions.Idle` inside an effect or a handler
-> works fine; `names` gives you the list.
+The `onClick` lands on the first group or mesh only — click your model in the
+browser and a clip runs, so you know it works within seconds of exporting.
+Delete that one prop and call `playOnce` from wherever suits you: a
+`useEffect` on mount, a keypress, a button outside the `<Canvas>`.
 
-> 💡 **Tip:** hit **Preview Code** first to see exactly what BR3F will
-> generate — no files written until you're happy.
+TSX output additionally narrows the clip names, so `actions.Idle` type-checks
+and typos don't:
+
+```ts
+type ActionName = 'Idle' | 'Walk' | 'TPose'
+```
+
+> 💡 **`console.log(actions)` prints `{}` — that's normal.** drei defines each
+> key as a lazy getter, so devtools won't evaluate them, and they return
+> `undefined` until the root ref is attached. `actions.Idle` inside an effect
+> or a handler works fine; `names` gives you the plain list.
 
 ## Features
 
 - **Per-mesh control** — the panel lists every mesh in the scene with
   checkboxes to include/exclude it from the export and to toggle its
   `castShadow` / `receiveShadow` props individually.
-- **Animations** — the **Animations** box lists every mesh and armature with a
-  checkbox that's greyed out when nothing animates it. Expand a row to see its
-  clips, tick the ones you want, and rename any of them — the name you type is
-  the key you look up in `actions`. Animated components are generated with
-  drei's `useAnimations` wired to a ref on the root group, a ready-to-run
-  `playOnce` example, and — for rigged models — `<skinnedMesh>` +
-  `<primitive object={nodes.Bone} />` so skeletal animation actually plays.
+- **[Animations](#animations)** — pick which clips ship, rename them, and get
+  drei's `useAnimations` wired up for you, with a click-to-play example to
+  prove it works. Rigged models get `<skinnedMesh>` and their bones.
 - **JSX or TSX** — TypeScript output includes a typed `GLTFResult` built
   from the exact nodes and materials the component references.
 - **Preview Code** — opens the generated component in a new window before
   you write anything to your project.
 - **Faithful output** — node keys match what three.js `GLTFLoader` produces
-  at runtime (name sanitization and deduplication), rotations are converted
+  at runtime (name sanitization and deduplication), every mesh carries the
+  `name` its animation tracks address it by, rotations are converted
   from quaternions to Euler angles, identity transforms are omitted, and
   multi-material meshes expand into a group the same way the loader builds
   them.
-- **Settings stick** — export options are stored in the `.blend` file;
-  per-mesh flags are stored on the objects themselves.
+- **Settings stick** — export options and the clip list are stored in the
+  `.blend` file; per-object flags are stored on the objects themselves, so
+  they travel with an appended or linked model.
 
 ## Roadmap
 
-Where BR3F might go next — ideas, not promises, and all open to contribution.
-Got a use case or want to pick one up? [Open an issue](../../issues).
+Where BR3F might go next — ideas, not promises, and **all open to
+contribution**. 🌱 marks the ones that are a good first change: small,
+self-contained, and testable without leaving your terminal. Want to pick one
+up, or got a use case that isn't here? [Open an issue](../../issues).
 
 **v0.2 — closing the obvious gaps**
 
 - [x] Export animations and wire up drei's `useAnimations`
 - [ ] Scope the export to a chosen collection or the current selection
-- [ ] Draco compression toggle for smaller `.glb` files
+- [ ] Draco compression toggle for smaller `.glb` files 🌱
 
 **v0.3 — nice-to-haves**
 
 - [ ] Instancing / merging for repeated meshes (`<Instances>` / `<Merged>`)
-- [ ] Emit cameras and lights instead of skipping them
-- [ ] Copy-to-clipboard in the Preview window
+- [ ] Emit cameras and lights instead of skipping them 🌱
+- [ ] Copy-to-clipboard in the Preview window 🌱
 
 **v1.0 — platform & polish**
 
@@ -169,8 +233,22 @@ Got a use case or want to pick one up? [Open an issue](../../issues).
 
 ## Contributing
 
-Bug reports, ideas and pull requests are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+**You don't need Blender to help.** All the interesting logic — reading the
+GLB, generating the JSX — is plain Python with no `bpy` dependency, and
+there's a test that runs it in one command:
+
+```bash
+python _smoke_test.py
+```
+
+That prints a complete generated component to your terminal. Edit the
+generator, run it again, read the difference. That's the whole loop, and it
+takes about a second.
+
+Everything else — where each piece lives, what to touch, how to test the
+Blender side when you do need it — is in
+[CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and ideas are just as welcome
+as code; [open an issue](../../issues) and say hello.
 
 ## License
 
