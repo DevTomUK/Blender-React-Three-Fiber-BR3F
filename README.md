@@ -16,6 +16,7 @@ in one click, from inside Blender.**
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](#license)
 [![Single file](https://img.shields.io/badge/install-single%20file-success)](BR3F.py)
 
+<img src="br3f2.png" alt="BR3F" width="800">
 <img src="BR3F.png" alt="The BR3F panel in Blender's sidebar" width="800">
 
 </div>
